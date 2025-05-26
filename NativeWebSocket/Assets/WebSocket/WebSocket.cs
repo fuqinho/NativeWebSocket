@@ -83,6 +83,8 @@ namespace NativeWebSocket
 {
     public delegate void WebSocketOpenEventHandler();
     public delegate void WebSocketMessageEventHandler(byte[] data);
+    public delegate void WebSocketTextMessageEventHandler(string message);
+    public delegate void WebSocketBinaryMessageEventHandler(byte[] data);
     public delegate void WebSocketErrorEventHandler(string errorMsg);
     public delegate void WebSocketCloseEventHandler(WebSocketCloseCode closeCode);
 
@@ -117,6 +119,8 @@ namespace NativeWebSocket
     {
         event WebSocketOpenEventHandler OnOpen;
         event WebSocketMessageEventHandler OnMessage;
+        event WebSocketTextMessageEventHandler OnTextMessage;
+        event WebSocketBinaryMessageEventHandler OnBinaryMessage;
         event WebSocketErrorEventHandler OnError;
         event WebSocketCloseEventHandler OnClose;
 
@@ -367,6 +371,8 @@ namespace NativeWebSocket
     {
         public event WebSocketOpenEventHandler OnOpen;
         public event WebSocketMessageEventHandler OnMessage;
+        public event WebSocketTextMessageEventHandler OnTextMessage;
+        public event WebSocketBinaryMessageEventHandler OnBinaryMessage;
         public event WebSocketErrorEventHandler OnError;
         public event WebSocketCloseEventHandler OnClose;
 
@@ -614,28 +620,63 @@ namespace NativeWebSocket
         }
 
         private List<byte[]> m_MessageList = new List<byte[]>();
+        private List<byte[]> m_BinaryMessageList = new List<byte[]>();
+        private List<string> m_TextMessageList = new List<string>();
 
         // simple dispatcher for queued messages.
         public void DispatchMessageQueue()
         {
-            if (m_MessageList.Count == 0)
+            if (m_MessageList.Count > 0)
             {
-                return;
+                List<byte[]> messageListCopy;
+
+                lock (IncomingMessageLock)
+                {
+                    messageListCopy = new List<byte[]>(m_MessageList);
+                    m_MessageList.Clear();
+                }
+
+                var len = messageListCopy.Count;
+                for (int i = 0; i < len; i++)
+                {
+                    OnMessage?.Invoke(messageListCopy[i]);
+                }
             }
 
-            List<byte[]> messageListCopy;
-
-            lock (IncomingMessageLock)
+            if (m_TextMessageList.Count > 0)
             {
-                messageListCopy = new List<byte[]>(m_MessageList);
-                m_MessageList.Clear();
+                List<string> textMessageListCopy;
+
+                lock (IncomingMessageLock)
+                {
+                    textMessageListCopy = new List<string>(m_TextMessageList);
+                    m_TextMessageList.Clear();
+                }
+
+                var len = textMessageListCopy.Count;
+                for (int i = 0; i < len; i++)
+                {
+                    OnTextMessage?.Invoke(textMessageListCopy[i]);
+                }
             }
 
-            var len = messageListCopy.Count;
-            for (int i = 0; i < len; i++)
+            if (m_BinaryMessageList.Count > 0)
             {
-                OnMessage?.Invoke(messageListCopy[i]);
+                List<byte[]> binaryMessageListCopy;
+
+                lock (IncomingMessageLock)
+                {
+                    binaryMessageListCopy = new List<byte[]>(m_BinaryMessageList);
+                    m_BinaryMessageList.Clear();
+                }
+
+                var len = binaryMessageListCopy.Count;
+                for (int i = 0; i < len; i++)
+                {
+                    OnBinaryMessage?.Invoke(binaryMessageListCopy[i]);
+                }
             }
+
         }
 
         public async Task Receive()
@@ -666,6 +707,7 @@ namespace NativeWebSocket
                             lock (IncomingMessageLock)
                             {
                               m_MessageList.Add(ms.ToArray());
+                              m_TextMessageList.Add(Encoding.UTF8.GetString(ms.ToArray()));
                             }
 
                             //using (var reader = new StreamReader(ms, Encoding.UTF8))
@@ -679,6 +721,7 @@ namespace NativeWebSocket
                             lock (IncomingMessageLock)
                             {
                               m_MessageList.Add(ms.ToArray());
+                              m_BinaryMessageList.Add(ms.ToArray());
                             }
                         }
                         else if (result.MessageType == WebSocketMessageType.Close)
